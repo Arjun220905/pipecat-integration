@@ -1,0 +1,60 @@
+x-runtime: &runtime
+  image: meetstream-pipecat:0.2.0
+  build: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 256
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  volumes:
+    - meeting-state:/state
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  bridge:
+    <<: *runtime
+    cpus: 2
+    mem_limit: 2g
+    ports:
+      - '127.0.0.1:${BRIDGE_PORT:-8000}:8000'
+    environment:
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      MEETSTREAM_API_KEY: ${MEETSTREAM_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      BOT_NAME: ${BOT_NAME:-MeetStream Pipecat}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
+      TTS_VOICE: ${TTS_VOICE:-aura-2-helena-en}
+      MAX_SESSIONS: ${MAX_SESSIONS:-4}
+      MAX_MEETING_SECONDS: ${MAX_MEETING_SECONDS:-3600}
+      RECORD_AUDIO: ${RECORD_AUDIO:-false}
+      EXTERNAL_REAPER: 'true'
+      INSTANCE_ID: ${INSTANCE_ID:-container}
+      DEPLOYMENT_ID: ${DEPLOYMENT_ID:-}
+  reaper:
+    <<: *runtime
+    cpus: 0.5
+    mem_limit: 256m
+    command: [reaper]
+    environment:
+      MEETSTREAM_API_KEY: ${MEETSTREAM_API_KEY:-}
+      JOIN_TIMEOUT_SECONDS: ${JOIN_TIMEOUT_SECONDS:-300}
+      DEPLOYMENT_ID: ${DEPLOYMENT_ID:-}
+    healthcheck:
+      test: [CMD, python, -c, "import time; from meetstream_pipecat.store import Store; assert time.time()-Store().meta('reaper_heartbeat') < 90"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  meeting-state:

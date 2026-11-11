@@ -1,0 +1,60 @@
+name: Checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: '0.13.7'
+      - run: uv lock --check
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen --extra dev python -m unittest discover -s tests -v
+      - run: uv run --frozen --extra dev ruff check .
+      - run: uv run --frozen --extra dev ruff format --check .
+      - run: uv run --frozen --extra dev python -m build
+      - run: uv export --frozen --no-dev --no-editable --no-emit-project --no-header -o /tmp/requirements.lock && cmp requirements.lock /tmp/requirements.lock
+      - run: uv export --frozen --only-group launcher --no-header -o /tmp/requirements-launcher.lock && cmp requirements-launcher.lock /tmp/requirements-launcher.lock
+      - run: uvx --from pip-audit==2.10.1 pip-audit -r requirements.lock --disable-pip --no-deps
+  windows-launcher:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --require-hashes -r requirements-launcher.lock
+      - run: python -m unittest discover -s tests -p test_launcher.py -v
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: docker build -t meetstream-pipecat:0.2.0 .
+      - name: Test production image in an isolated network and read-only filesystem
+        timeout-minutes: 2
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --security-opt no-new-privileges --memory 2g --cpus 2 --pids-limit 256
+          --tmpfs /tmp:size=128m
+          --mount type=bind,source="$PWD/tests",target=/checks,readonly
+          --mount type=bind,source="$PWD/scripts",target=/app/scripts,readonly
+          --entrypoint python meetstream-pipecat:0.2.0
+          -m unittest discover -s /checks -v
+      - name: Scan OS and Python packages for high and critical advisories
+        run: |
+          docker image save meetstream-pipecat:0.2.0 -o /tmp/image.tar
+          mkdir -p /tmp/trivy-cache
+          docker run --rm --user "$(id -u):$(id -g)" --read-only --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 2 --pids-limit 128 --tmpfs /tmp:size=1g --mount type=bind,source=/tmp/image.tar,target=/image.tar,readonly --mount type=bind,source=/tmp/trivy-cache,target=/cache aquasec/trivy:0.76.2 --quiet --cache-dir /cache image --input /image.tar --scanners vuln --severity HIGH,CRITICAL --exit-code 1

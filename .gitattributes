@@ -1,0 +1,4 @@
+*.cmd text eol=crlf
+start text eol=lf
+stop text eol=lf
+status text eol=lf
