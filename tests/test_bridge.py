@@ -431,6 +431,10 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             await audio.send(packet(pcm=b"\x10\x00" * 144000))
             with self.assertRaises(ConnectionClosed):
                 await asyncio.wait_for(audio.recv(), 5)
+            # The audio handler can close before the session persists shutdown.
+            # The session closes the control socket after persisting it.
+            with self.assertRaises(ConnectionClosed):
+                await asyncio.wait_for(control.recv(), 5)
         self.assertLessEqual(self.voices[0].meeting_input.window.high_water, 1)
         self.assertLessEqual(len(self.voices[0].meeting_input.pending_frames), 50)
         self.assertEqual(self.store.get(self.session_id)["state"], "stopping")
